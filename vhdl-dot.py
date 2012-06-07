@@ -23,7 +23,6 @@ reserved = {
 	'map'		: 'MAP',
 	'in'		: 'IN',
 	'out'		: 'OUT',
-	
 	'signal'	: 'SIGNAL',
 	# Logical operators
 	'and'		: 'AND',
@@ -55,6 +54,7 @@ tokens = [
 	'COMMA',
 	'CONNECTION_OUT',
 	'CONNECTION_IN',
+	'LITERAL',
 	] + list(reserved.values())
 	
 t_ignore = '\t ' #ignore tabs and spaces
@@ -68,10 +68,15 @@ t_COLON 	= r':'
 t_LPAREN 	= r'\('
 t_RPAREN 	= r'\)'
 t_COMMA		= r','
+#t_LITERAL	= r'((X(\'|\")([a-fA-F0-9]+)(\'|\"))|((\'|\")([0-1]+)((\'|\"))))'
 
 t_CONNECTION_OUT	= r'=>'
 t_CONNECTION_IN		= r'<='
 
+def t_LITERAL(t):
+	r'((X(\'|\")([a-fA-F0-9]+)(\'|\"))|((\'|\")([0-1]+)((\'|\"))))'
+	return t
+	
 def t_newLine(t):
 	r'\n'
 	#Set the line number of each token
@@ -160,11 +165,17 @@ def p_component(p):
 	
 # entity : ENTITY IDENTIFIER IS portDef END IDENTIFIER ;
 def p_entity(p):
-	'entity : ENTITY IDENTIFIER IS portDef END IDENTIFIER SCOLON'
-	#locals
+	'''entity : ENTITY IDENTIFIER IS portDef END IDENTIFIER SCOLON
+			  | ENTITY IDENTIFIER IS END IDENTIFIER SCOLON'''		
 	ident = p[2]
 	inSignals = []
 	outSignals = []
+
+	# Entity does not contain a portDef
+	if len(p) == 7:
+		p[0] = vhdl.component(ident)
+		return
+		
 	#Organize the signals
 	for signal in p[4]:
 		if signal.type == 'in':
@@ -177,8 +188,8 @@ def p_entity(p):
 	#Create the entity
 	#Note: an entity is identical to a component, however, its signals has global context
 	p[0] = vhdl.component(ident, inSignals, outSignals)
-
-# portDef : PORT ( signalDeclarationList );	
+	
+# portDef : PORT ( signalDeclarationList );
 def p_portDef(p):
 	'portDef : PORT LPAREN signalDeclarationList RPAREN SCOLON'
 	p[0] = p[3]
@@ -188,9 +199,11 @@ def p_signalAssign2(p):
 	'signalAssign : signal connection lE'
 	
 	if p[2] == 'out':
-		p[0] = vhdl.signalAssignment(p[1], ("\""+p[3]+"\""), 'forward')
+		#p[0] = vhdl.signalAssignment(p[1], ("\""+p[3]+"\""), 'forward')
+		p[0] = vhdl.signalAssignment(p[1], p[3], 'forward')
 	elif p[2] == 'in':
-		p[0] = vhdl.signalAssignment(p[1], ("\""+p[3]+"\""), 'back')
+		#p[0] = vhdl.signalAssignment(p[1], ("\""+p[3]+"\""), 'back')
+		p[0] = vhdl.signalAssignment(p[1], p[3], 'back')
 	else:
 		raise Exception("Expected connection in or out. Got: " + p[2])
 
@@ -297,7 +310,8 @@ def p_lE(p):
 	'''lE : NOT lE
 		| lE lOp lE
 		| LPAREN lE RPAREN
-		| signal'''
+		| signal
+		| LITERAL'''
 	# signal
 	if len(p) == 2:
 		p[0] = p[1]
@@ -383,7 +397,7 @@ def generateDotFile(componentTemplates, signalDefinitions, signalAssignments, po
 	file.write("\n//Port maps\n")
 	for pm in portMaps:
 
-		file.write(pm.identifier + " [shape=record,label=\"")
+		file.write(pm.identifier + " [shape=record,nodesep=20,label=\"")
 		file.write("{"+pm.identifier+"|{")
 		# Get the list of input signals for the component that the port map is using
 		inSignals = components[pm.componentName].inSignals
@@ -469,7 +483,7 @@ for results in parsedData:
 	outputName = fileName.strip(".vhd") + ".dot"
 	logFileName = fileName.strip(".vhd") + ".log"
 	r = results[1]
-	
+
 	rootEntity = r[0]
 	componentTemplates = []
 	signalDefinitions = []
@@ -491,7 +505,12 @@ for results in parsedData:
 		elif isinstance(statement, vhdl.portMap):
 			portMaps.append(statement)
 			
-	generateDotFile(componentTemplates, signalDefinitions, signalAssignments, portMaps, outputName)
+	
+			
+	renderer = vhdl.dotRenderer()
+	renderer.generateDotCode(rootEntity, componentTemplates, signalDefinitions, signalAssignments, portMaps, outputName)
+	
+	#generateDotFile(componentTemplates, signalDefinitions, signalAssignments, portMaps, outputName)
 
 	logFile = open(logFileName, 'w')
 
